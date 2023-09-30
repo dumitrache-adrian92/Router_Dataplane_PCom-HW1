@@ -1,0 +1,154 @@
+# Tema 1 PCOM - Dataplane Router
+
+## Cerinte rezoltate:
+- Procesul de dirijare
+- Longest Prefix Matching eficient
+- Protocolul ARP
+- Protocolul ICMP
+
+## Bibliografie
+- cerinta
+- https://linux.die.net/man/
+- https://www.lewuathe.com/longest-prefix-match-with-trie-tree.html
+- https://www.geeksforgeeks.org/longest-common-prefix-using-trie/
+- https://www.rfc-editor.org/
+- https://www.youtube.com/@BenEater
+- API-ul dat in schelet, mentionez asta pentru ca am o functie inspirata din
+una din functiile API-ului (populate_trie inspirat din read_rtable)
+
+## Procesul de dirijare
+
+### *Momente marcante*
+
+Am incercat toate permutarile de endianness fiindca nu am
+verificat ce returneaza functiile din API inainte sa incep sa le folosesc
+(fun fact: read_rtable returneaza totul in network order mai putin interfata)
+si cumva am primit puntajul de eficienta cu o cautare liniara in tabela de
+rute. Ulterior nu l-am mai primit cu implementare cu trie, such is life.
+
+### *Solutie*
+
+La fiecare pachet in care este incapsulat un header IPv4 verific daca pachetul
+este destinat router-ului. Daca nu, este clar ca pachetul ar trebui forwardat
+catre un altcineva si incep analizez pachetul:
+
+- recalculez checksum-ul si dau drop la pachet daca nu corespunde cu ce am primit
+- decrementez ttl-ul si actualizez checksum-ul
+- caut adresa IP urmatorului hop folosind tabela statica de rutare
+- caut adresa MAC a urmatorului hop in cache-ul de ARP si trimit request ARP
+pentru ea daca nu o am deja (procesul se continua dupa ce primesc raspunsul)
+- actualizez cele 2 adrese din header-ul de Ethernet cu adresa router-ului,
+respectiv adresa primita la pasul anterior
+- trimit pachetul mai departe pe interfata propusa de routing table
+
+## Longest Prefix Match eficient
+
+### *Momente marcante*
+
+Am pierdut punctajul de eficienta incercand sa rezolv mai eficient.
+
+### *Solutie*
+
+Am implementat o trie dupa prefixul in binar al intrarilor din tabela de rutare
+in care singurele caractere legale sunt 0 si 1. Intr-un nod al triei se poate
+afla o intrare in tabela de rutare sau nu. In cazul tabelelor de rutare date,
+se vor afla noduri cu intrari doar la frunze, fiindca toate intrarile au prefix
+de lungimea 24, totusi functiile date ar trebui sa mearga si daca avem prefixe
+de diverse lungimi.
+
+Pentru a insera o intrare din tabela de rutare in trie, parcurg bitii
+prefixului atat timp cat bitul apartine mastii date si cobor in trie sau creez
+un nou nod daca nu exista deja in functie de valoarea bitului respectiv. Cand
+epuizez bitii prefixului ce apartin mastii, adaug intrarea din tabela de rutare
+in ultimul nod in care am ajuns.
+
+Ca sa populez tria am pornit de la functia read_rtable si am modificat-o astfel
+incat, pentru fiecare intrare citita, sa o insereze in trie in loc de un array.
+In rest totul e identic cu functia read_rtable.
+
+Astfel, cand cautam urmatorul hop pentru o adresa data x, parcurgem bitii lui x
+si mergem in nodul urmator bazat pe valoarea bitului curent. De fiecare data
+nodul in care ne aflam contine o intrare din tabela de rutare, o retinem ca
+fiind rezultatul cautarii pana cand gasim alta intrare mai adanc in trie sau
+ajungem in frunze.
+
+## Protocolul ARP
+
+### *Momente marcante*
+
+Am stat ~5 ore sa fac debug fiindca imi dadeau testele de ARP, dar imi picau
+forward-uri. Pana la urma am avut de schimbat doar o linie, nu ma oftic deloc,
+jur.
+
+### *Solutie*
+
+Mentin un cache de ARP local cu perechi IP:MAC si o coada de pachete IPv4 ce
+asteapta raspuns ARP cu adresa MAC de care au nevoie. De fiecare data cand avem
+un pachet de dirijat verificam daca avem adresa MAC a urmatorului hop cache si
+il trimit mai departe daca o gasesc. Daca nu, salvez pachetul pe care il am de
+dirijat in coada de pachete si trimit in schimb o cerere ARP pentru adresa MAC
+a urmatorului hop. Procesul de dirijare al pachetului va continua abia dupa ce
+primim un raspuns, pana atunci router-ul poate continua sa dirijeze alte
+pachete.
+
+Cand primesc un raspuns ARP, adaug perechea IP:MAC primita in cache-ul de ARP
+si parcurg coada de pachete in asteptare. Daca un pachet astepta adresa MAC
+primita, o adaug in header-ul Ethernet si trimit pachetul, altfel adaug pachetul
+inapoi in coada (nu stiu cat de inspirat a fost sa folosesc o coada pentru
+asta, deoarece nu taie din complexitate de loc fata de o lista spre exemplu).
+
+Daca primesc o cerere ARP, trimit inapoi expeditorului un raspuns ARP cu MAC-ul
+router-ului.
+
+## Protocolul ICMP
+
+### *Momente marcante*
+
+A mers destul de repede, ceea ce nu s-a mai intamplat pana acum in cadrul
+acestei teme.
+
+### *Solutie*
+
+**Echo request:** Daca primim un pachet cu IPv4 incapsulat in cadrul Ethernet,
+iar adresa IP destinatie este chiar router-ul, router-ul va trebui sa raspunda
+inapoi cu un echo reply. Tot ce fac este sa inversez adresele IP din header-ul
+IPv4 si sa incapsulez un header ICMP de tip echo reply in el, apoi sa
+reutilizez logica de dirijare a pachetelor pentru a trimite mesajul catre
+expeditorul original.
+
+**Time excedeed si Destination unreachable:** Aici implementarea este comuna
+fiindca, dupa ce am facut 2 functii separate pentru aceste situatii, mi-am dat
+seama ca singura diferenta dintre ele este ce pun la type si code in header-ul
+ICMP. Astfel, atunci cand am de dirijat un pachet IPv4 si expira TTL-ul sau nu
+gasesc o ruta, pur si simplu apelez o functie careia ii trimit si type/code al
+erorii pe care o trimitem.
+
+Functia aceasta face urmatoarele lucruri:
+- primeste pachetul original in intregime, pointer catre lungimea pachetului,
+interfata, type si code
+- memoreaza header-ul IPv4 original + 64 de biti ca sa fie puse la datele
+mesajului ICMP
+- modifica header-ul IPv4 (schimba adresele IP, reseteaza TTL-ul, schimba
+lungimea totala, declara ca va fi incapsulat un header ICMP si recalculeaza
+checksum-ul)
+- construieste header-ul ICMP conform type si code primit si calculeaza
+checksum-ul
+- adauga ce am memorat la pasul 2 ca date ale ICMP-ului
+- actualizeaza lungimea pachetului
+
+Cand functia se intoarce, buffer-ul unde se afla pachetul va fi modificat in
+intregime, iar procesul de dirijare poate continua de unde a ramas.
+
+# Feedback si concluzie
+
+Tema strong, iti baga protocoalele in cap. Totusi, pe viitor ar fi ok sa fie
+mai bine documentate functiile API-ului. Exemple:
+- in documentatia functiei read_rtable aflam ca "Intrarile in tabela de rutare
+sunt deja in network order", ceea ce e adevarat pentru toate variabilele
+inafara de interface, sunt constient ca are sens sa fie asa, dar nu reiese din
+documentatie
+- parse_arp_table pune tot in network order, ceea ce nu este mentionat nicaieri
+- get_interface_ip nu e documentata deloc
+
+Atat am avut de zis, sper ca viata unui network engineer e mai usoara decat
+tema asta, chiar imi pare rau pentru ei daca nu. Ciao!
