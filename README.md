@@ -7,12 +7,12 @@ corresponding virtual topology. These can be used to play with the router.
 Like this:
 ```bash
 sudo python3 checker/topo.py
-make run_router0 // in the router 0 terminal
-make run_router1 // in the router 1 terminal
+make run_router0 # in the router 0 terminal
+make run_router1 # in the router 1 terminal
 ```
 And then use networking commands between hosts like ping to communicate:
 ```
-ping h1 // from host2
-ping h3 // from host0
+ping h1 # from host2
+ping h3 # from host0
 etc.
 ```
